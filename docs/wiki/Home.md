@@ -14,6 +14,7 @@ Server-side PDF, SVG and PNG from Typst templates. The service computes every va
 - Place values with `#data.field`, loop with `#for line in data.lines [...]`. A string from the data is content, so `*`, `#` or `_` in it render as they are.
 - Compute in Go, not in the template: totals, taxes, formatted dates and amounts go into the data as strings. The template stays a pure renderer that a designer can change without touching business rules.
 - User Markdown goes through `typst.FromMarkdown` in Go and `#eval(data.description, mode: "markup")` in the template. `eval` of anything else that came from a user is a code injection.
+- `FromMarkdown` nests at most 8 calls deep, and typst's depth limit counts the template's nesting around the `eval` too: keep it shallow (a table cell in a list in a quote still works). Input over `typst.MaximumMarkdownSize` (32 KiB) renders as plain text; check the length where the user writes it if that matters.
 - `datetime.today()` is the render host's date. Pass the document date in the data.
 
 ## Wiring in a service
@@ -80,3 +81,5 @@ Set `Options.Version` to the same release: a binary that is missing, of the wron
 - `Compile` blocks for the whole render. Pass a context with the job's deadline; the caller's cancellation kills the process and returns the context's error, `Options.Timeout` returns `ErrTimeout`.
 - The render directory lives in `os.TempDir()` unless `Options.TemporaryDirectory` says otherwise. In a read-only container, mount an `emptyDir` and point the option at it.
 - `CompileError.Error()` shows only the first error line; read `Diagnostics` for every message and the warnings.
+- A successful compile can still have warnings, a font missing from `FontPaths` above all (typst renders the fallback font and exits 0). They reach the observers as `Outcome.Warnings`; record them on the wide event or count them.
+- `Options.TemporaryDirectory` must exist when `typst.New` runs.

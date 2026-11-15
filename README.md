@@ -59,7 +59,7 @@ Errors to branch on: `typst.ErrInvalidDocument` (nothing ran), `*typst.CompileEr
 ## User text
 
 - **Data file** (preferred): put the text into `Data`, place it with `#data.field`. Nothing to escape.
-- **Markdown** a user wrote: `typst.FromMarkdown(text)` returns Typst markup in which every character of the input is escaped text; headings, lists, tables, code, links (http, https, mailto only) become calls. Pass it as data and evaluate it: `#eval(data.description, mode: "markup")`. Raw HTML stays visible text, images become their alternative text.
+- **Markdown** a user wrote: `typst.FromMarkdown(text)` returns Typst markup in which every character of the input is escaped text; headings, lists, tables, code, links (http, https, mailto only) become calls. Pass it as data and evaluate it: `#eval(data.description, mode: "markup")`. Raw HTML stays visible text, images become their alternative text. The output always compiles: nesting stops at 8 calls, overlong link targets keep their label, and input over `typst.MaximumMarkdownSize` (32 KiB) becomes escaped plain text.
 - **Templates built as Go strings**: `typst.Escape(text)` for markup, `typst.Quote(text)` for a string literal in code.
 
 ## What a render can do
