@@ -55,20 +55,27 @@ func New(options *Options) (*Spans, error) {
 	return &Spans{tracer: options.TracerProvider.Tracer(ScopeName)}, nil
 }
 
+// spanKey keeps the span of one Spans in the context. CompileFinished receives the context of
+// the last observer, whose current span may be another observer's.
+type spanKey struct{ spans *Spans }
+
 // CompileStarted starts the compile's span and returns the context that carries it.
 func (s *Spans) CompileStarted(ctx context.Context, compile *typst.Compile) context.Context {
 	attributes := []attribute.KeyValue{AttributeFormat.String(string(compile.Format))}
 	if compile.Name != "" {
 		attributes = append(attributes, AttributeName.String(compile.Name))
 	}
-	ctx, _ = s.tracer.Start(ctx, SpanName, trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attributes...))
-	return ctx
+	ctx, span := s.tracer.Start(ctx, SpanName, trace.WithSpanKind(trace.SpanKindInternal), trace.WithAttributes(attributes...))
+	return context.WithValue(ctx, spanKey{s}, span)
 }
 
 // CompileFinished records the result on the span and ends it. A failure is recorded as its
 // typst.Result, never its error text.
 func (s *Spans) CompileFinished(ctx context.Context, _ *typst.Compile, outcome *typst.Outcome) {
-	span := trace.SpanFromContext(ctx)
+	span, ok := ctx.Value(spanKey{s}).(trace.Span)
+	if !ok {
+		return // a context CompileStarted of this Spans did not return
+	}
 	span.SetAttributes(AttributeResult.String(string(outcome.Result)))
 	if outcome.Result == typst.ResultSuccess {
 		span.SetAttributes(AttributeOutputBytes.Int(outcome.OutputSize))

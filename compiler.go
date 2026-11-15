@@ -47,7 +47,12 @@ var environment = []string{
 	"all_proxy=" + blockedProxy,
 }
 
-var versionPattern = regexp.MustCompile(`^typst (\d+)\.(\d+)\.(\d+)`)
+var (
+	// versionPattern reads the version from the output of typst --version.
+	versionPattern = regexp.MustCompile(`^typst (\d+)\.(\d+)\.(\d+)`)
+	// requiredVersionPattern is the form of Options.Version.
+	requiredVersionPattern = regexp.MustCompile(`^\d+\.\d+\.\d+$`)
+)
 
 // Options configures a Compiler.
 type Options struct {
@@ -68,7 +73,7 @@ type Options struct {
 	// none. Packages are never downloaded at render time.
 	PackagePath string
 	// TemporaryDirectory is where each compile creates its render directory; empty means
-	// os.TempDir().
+	// os.TempDir(). It must exist.
 	TemporaryDirectory string
 	// Timeout bounds one compile, which is killed when it runs longer; zero means DefaultTimeout.
 	Timeout time.Duration
@@ -89,7 +94,7 @@ type Compiler struct {
 
 // New resolves the binary, runs it once with --version and returns a Compiler. It fails when the
 // binary is missing, reports a version below MinimumVersion or other than Options.Version, or
-// when a font or package directory does not exist.
+// when a font, package or temporary directory does not exist.
 func New(options *Options) (*Compiler, error) {
 	if options == nil {
 		options = &Options{}
@@ -122,7 +127,7 @@ func (c *Compiler) applyDefaults() error {
 	if slices.Contains(options.Observers, nil) {
 		return errors.New("typst: Observers holds a nil Observer")
 	}
-	if options.Version != "" && !versionPattern.MatchString("typst "+options.Version) {
+	if options.Version != "" && !requiredVersionPattern.MatchString(options.Version) {
 		return fmt.Errorf("typst: Version %q is not major.minor.patch", options.Version)
 	}
 	binary, err := resolveBinary(options.Binary)
@@ -137,6 +142,11 @@ func (c *Compiler) applyDefaults() error {
 	}
 	if options.PackagePath != "" {
 		if options.PackagePath, err = existingDirectory(options.PackagePath, "package path"); err != nil {
+			return err
+		}
+	}
+	if options.TemporaryDirectory != "" {
+		if options.TemporaryDirectory, err = existingDirectory(options.TemporaryDirectory, "temporary directory"); err != nil {
 			return err
 		}
 	}
@@ -233,7 +243,7 @@ func (c *Compiler) Version() string {
 // ErrInvalidDocument before running anything for a document it cannot compile, a *CompileError
 // when typst refuses the template, ErrTimeout, ErrOutputTooLarge, ErrPageNotFound, or the
 // context's error wrapped when ctx ends first. The render directory is removed before Compile
-// returns.
+// returns; when that fails, the error says so, joined with the compile's own error.
 func (c *Compiler) Compile(ctx context.Context, document *Document) ([]byte, error) {
 	if err := document.validate(); err != nil {
 		return nil, err
@@ -245,8 +255,10 @@ func (c *Compiler) Compile(ctx context.Context, document *Document) ([]byte, err
 	compile := &Compile{Name: document.Name, Format: document.format()}
 	ctx = c.started(ctx, compile)
 	started := time.Now()
-	output, err := c.render(ctx, document, data)
-	c.finished(ctx, compile, &Outcome{Result: resultOf(err, ctx.Err() != nil), Duration: time.Since(started), OutputSize: len(output), Err: err})
+	output, warnings, err := c.render(ctx, document, data)
+	c.finished(ctx, compile, &Outcome{
+		Result: resultOf(err, ctx.Err() != nil), Duration: time.Since(started), OutputSize: len(output), Warnings: warnings, Err: err,
+	})
 	return output, err
 }
 
@@ -265,30 +277,32 @@ func (c *Compiler) finished(ctx context.Context, compile *Compile, outcome *Outc
 
 // render runs one compile in a fresh directory: <directory>/project is the project root, the
 // rest of <directory> holds what typst needs outside the root.
-func (c *Compiler) render(ctx context.Context, document *Document, data []byte) (output []byte, err error) {
+// It returns the output and the warnings typst printed for a successful compile.
+func (c *Compiler) render(ctx context.Context, document *Document, data []byte) (output []byte, warnings string, err error) {
 	directory, err := os.MkdirTemp(c.options.TemporaryDirectory, "typst-")
 	if err != nil {
-		return nil, fmt.Errorf("typst: create the render directory: %w", err)
+		return nil, "", fmt.Errorf("typst: create the render directory: %w", err)
 	}
 	defer func() {
 		// The directory holds the caller's data, so leaving it behind is an error, not a leak to ignore.
-		if removeErr := os.RemoveAll(directory); removeErr != nil && err == nil {
-			output, err = nil, fmt.Errorf("typst: remove the render directory: %w", removeErr)
+		if removeErr := os.RemoveAll(directory); removeErr != nil {
+			output, warnings = nil, ""
+			err = errors.Join(err, fmt.Errorf("typst: remove the render directory: %w", removeErr))
 		}
 	}()
 	project := filepath.Join(directory, "project")
 	if err := writeProject(project, document, data); err != nil {
-		return nil, err
+		return nil, "", err
 	}
-	output, err = c.run(ctx, project, c.arguments(document, directory))
+	output, warnings, err = c.run(ctx, project, c.arguments(document, directory))
 	if err == nil && len(output) == 0 {
 		if document.format() != FormatPDF {
 			// typst exits 0 without output when --pages names no page of the document.
-			return nil, ErrPageNotFound
+			return nil, "", ErrPageNotFound
 		}
-		return nil, errors.New("typst: the compile produced no output")
+		return nil, "", errors.New("typst: the compile produced no output")
 	}
-	return output, err
+	return output, warnings, err
 }
 
 // writeProject writes the template, the data and the files with permissions for the owner only.
@@ -343,8 +357,9 @@ func (c *Compiler) arguments(document *Document, directory string) []string {
 	return append(arguments, SourceFile, "-")
 }
 
-// run starts typst in the project directory and reads its output from stdout.
-func (c *Compiler) run(ctx context.Context, project string, arguments []string) ([]byte, error) {
+// run starts typst in the project directory and reads its output from stdout; on success it
+// returns what typst printed on stderr as the warnings.
+func (c *Compiler) run(ctx context.Context, project string, arguments []string) ([]byte, string, error) {
 	runContext, cancelTimeout := context.WithTimeoutCause(ctx, c.options.Timeout, ErrTimeout)
 	defer cancelTimeout()
 	runContext, cancel := context.WithCancelCause(runContext)
@@ -362,19 +377,21 @@ func (c *Compiler) run(ctx context.Context, project string, arguments []string) 
 
 	err := command.Run()
 	if err == nil {
-		return stdout.content, nil
+		return stdout.content, stderr.String(), nil
 	}
 	switch cause := context.Cause(runContext); {
 	case ctx.Err() != nil:
-		return nil, fmt.Errorf("typst: compile: %w", context.Cause(ctx))
+		// The context's error, not its cause: a cause is the caller's own error, which would
+		// make this compile look like whatever failed elsewhere.
+		return nil, "", fmt.Errorf("typst: compile: %w", ctx.Err())
 	case errors.Is(cause, ErrOutputTooLarge), errors.Is(cause, ErrTimeout):
-		return nil, cause
+		return nil, "", cause
 	}
 	var exitError *exec.ExitError
 	if errors.As(err, &exitError) {
-		return nil, &CompileError{ExitCode: exitError.ExitCode(), Diagnostics: stderr.String()}
+		return nil, "", &CompileError{ExitCode: exitError.ExitCode(), Diagnostics: stderr.String()}
 	}
-	return nil, fmt.Errorf("typst: run %s: %w", c.options.Binary, err)
+	return nil, "", fmt.Errorf("typst: run %s: %w", c.options.Binary, err)
 }
 
 // cappedBuffer collects a process's output up to limit bytes. Beyond the limit it either drops

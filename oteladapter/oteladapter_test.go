@@ -73,3 +73,33 @@ func TestAFailedCompileIsAnErrorWithoutItsText(t *testing.T) {
 	require.Equal(t, "compile_error", span.Status().Description)
 	require.Empty(t, span.Events(), "no recorded error text")
 }
+
+func TestTwoSpansObserversEndTheirOwnSpans(t *testing.T) {
+	recorder := tracetest.NewSpanRecorder()
+	provider := sdktrace.NewTracerProvider(sdktrace.WithSpanProcessor(recorder))
+	first, err := oteladapter.New(&oteladapter.Options{TracerProvider: provider})
+	require.NoError(t, err)
+	second, err := oteladapter.New(&oteladapter.Options{TracerProvider: provider})
+	require.NoError(t, err)
+	compile := &typst.Compile{Format: typst.FormatPDF}
+
+	// The order typst.Compiler calls them in: started in order, finished in reverse, both with
+	// the last observer's context.
+	ctx := second.CompileStarted(first.CompileStarted(t.Context(), compile), compile)
+	outcome := &typst.Outcome{Result: typst.ResultSuccess}
+	second.CompileFinished(ctx, compile, outcome)
+	first.CompileFinished(ctx, compile, outcome)
+
+	ended := recorder.Ended()
+	require.Len(t, ended, 2)
+	require.NotEqual(t, ended[0].SpanContext().SpanID(), ended[1].SpanContext().SpanID())
+	require.Equal(t, ended[1].SpanContext().SpanID(), ended[0].Parent().SpanID())
+}
+
+func TestFinishingAContextWithoutASpanDoesNothing(t *testing.T) {
+	spans, recorder, tracer := newSpans(t)
+	ctx, other := tracer.Start(t.Context(), "someone else's")
+	spans.CompileFinished(ctx, &typst.Compile{}, &typst.Outcome{Result: typst.ResultSuccess})
+	require.Empty(t, recorder.Ended())
+	other.End()
+}

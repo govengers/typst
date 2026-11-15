@@ -41,6 +41,8 @@ const (
 	fakeFlood       = "flood"  // 200 KiB on stderr, exit 1
 	fakeExit        = "exit 3" // exit 3 without diagnostics
 	fakeLargePrefix = "large " // "large <n>": n bytes on stdout
+	fakeWarn        = "warn"   // a warning on stderr, output, exit 0
+	fakeLock        = "lock"   // make the render directory unremovable, output, exit 0; "lock fail" exits 1
 )
 
 func fakeTypst(arguments []string) int {
@@ -76,6 +78,22 @@ func fakeTypst(arguments []string) int {
 		return 1
 	case command == fakeExit:
 		return 3
+	case command == fakeWarn:
+		fmt.Fprintln(os.Stderr, "main.typ:1:16: warning: unknown font family: inter")
+		fmt.Print("output")
+		return 0
+	case strings.HasPrefix(command, fakeLock):
+		// Without write permission on the render directory, its project directory cannot go.
+		if err := os.Chmod("..", 0o500); err != nil { //nolint:gosec // G302: the fake locks its render directory
+			fmt.Fprintln(os.Stderr, "error:", err)
+			return 2
+		}
+		if command != fakeLock {
+			fmt.Fprintln(os.Stderr, "main.typ:1:1: error: locked")
+			return 1
+		}
+		fmt.Print("output")
+		return 0
 	case strings.HasPrefix(command, fakeLargePrefix):
 		size, _ := strconv.Atoi(strings.TrimPrefix(command, fakeLargePrefix))
 		fmt.Print(strings.Repeat("x", size))

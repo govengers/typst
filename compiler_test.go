@@ -57,6 +57,7 @@ func TestNewChecksTheBinary(t *testing.T) {
 		{"too old", typst.Options{Binary: fakeBinary(t, "0.12.0")}, "older than the minimum 0.13.0"},
 		{"other than required", typst.Options{Binary: fakeBinary(t, "0.15.0"), Version: "0.15.1"}, "the options require 0.15.1"},
 		{"malformed required version", typst.Options{Binary: fakeBinary(t, "0.15.1"), Version: "0.15"}, "is not major.minor.patch"},
+		{"required version with a suffix", typst.Options{Binary: fakeBinary(t, "0.15.1"), Version: "0.15.1-rc1"}, "is not major.minor.patch"},
 		{"unparseable version", typst.Options{Binary: fakeBinary(t, "garbage")}, "unexpected --version output"},
 		{"negative timeout", typst.Options{Timeout: -time.Second}, "must not be negative"},
 		{"negative output size", typst.Options{MaximumOutputSize: -1}, "must not be negative"},
@@ -66,6 +67,7 @@ func TestNewChecksTheBinary(t *testing.T) {
 		{"two font paths in one", typst.Options{FontPaths: []string{t.TempDir() + string(filepath.ListSeparator) + t.TempDir()}}, "one non-empty directory"},
 		{"empty font path", typst.Options{FontPaths: []string{""}}, "one non-empty directory"},
 		{"missing package path", typst.Options{PackagePath: filepath.Join(t.TempDir(), "packages")}, "package path"},
+		{"missing temporary directory", typst.Options{TemporaryDirectory: filepath.Join(t.TempDir(), "missing")}, "temporary directory"},
 	}
 	for _, testCase := range cases {
 		t.Run(testCase.name, func(t *testing.T) {
@@ -180,6 +182,12 @@ func TestCompileRefusesAnInvalidDocument(t *testing.T) {
 		"empty path":            {Source: source, Files: map[string][]byte{"": nil}},
 		"the source file":       {Source: source, Files: map[string][]byte{"main.typ": nil}},
 		"the data file in caps": {Source: source, Files: map[string][]byte{"DATA.json": nil}},
+		"below the source file": {Source: source, Files: map[string][]byte{"main.typ/x": nil}},
+		"below the data file":   {Source: source, Files: map[string][]byte{"Data.json/x/y": nil}},
+		"a file and a dir":      {Source: source, Files: map[string][]byte{"a": nil, "a/b": nil}},
+		"a file and a dir case": {Source: source, Files: map[string][]byte{"A": nil, "a/b": nil}},
+		"names differing case":  {Source: source, Files: map[string][]byte{"Logo.svg": nil, "logo.svg": nil}},
+		"nul byte":              {Source: source, Files: map[string][]byte{"a\x00b": nil}},
 	}
 	for name, document := range cases {
 		t.Run(name, func(t *testing.T) {
@@ -236,6 +244,18 @@ func TestCompileStopsWhenTheCallerCancels(t *testing.T) {
 	require.NotErrorIs(t, err, typst.ErrTimeout)
 }
 
+func TestCompileReturnsTheContextsErrorNotItsCause(t *testing.T) {
+	compiler := newCompiler(t, &typst.Options{})
+	// errgroup.WithContext cancels the others with the first failure as the cause.
+	cause := &typst.CompileError{ExitCode: 1, Diagnostics: "main.typ:1:1: error: in another document"}
+	ctx, cancel := context.WithCancelCause(t.Context())
+	cancel(cause)
+	_, err := compiler.Compile(ctx, &typst.Document{Source: []byte(fakeHang)})
+	require.ErrorIs(t, err, context.Canceled)
+	var compileError *typst.CompileError
+	require.False(t, errors.As(err, &compileError), "the cause is not in the chain: %v", err)
+}
+
 func TestCompileCapsTheOutput(t *testing.T) {
 	compiler := newCompiler(t, &typst.Options{MaximumOutputSize: 100_000})
 
@@ -270,9 +290,49 @@ func TestCompileRemovesTheRenderDirectory(t *testing.T) {
 }
 
 func TestCompileWithoutATemporaryDirectory(t *testing.T) {
-	compiler := newCompiler(t, &typst.Options{TemporaryDirectory: filepath.Join(t.TempDir(), "missing")})
+	temporary := filepath.Join(t.TempDir(), "gone")
+	require.NoError(t, os.Mkdir(temporary, 0o700))
+	compiler := newCompiler(t, &typst.Options{TemporaryDirectory: temporary})
+	require.NoError(t, os.Remove(temporary))
 	_, err := compiler.Compile(t.Context(), &typst.Document{Source: []byte("echo")})
 	require.ErrorContains(t, err, "create the render directory")
+}
+
+func TestCompileReportsARenderDirectoryLeftBehind(t *testing.T) {
+	temporary := t.TempDir()
+	t.Cleanup(func() { unlockRenderDirectories(t, temporary) })
+	compiler := newCompiler(t, &typst.Options{TemporaryDirectory: temporary})
+
+	for _, source := range []string{fakeLock, fakeLock + " fail"} {
+		_, err := compiler.Compile(t.Context(), &typst.Document{Source: []byte(source)})
+		require.ErrorContains(t, err, "remove the render directory")
+	}
+	_, err := compiler.Compile(t.Context(), &typst.Document{Source: []byte(fakeLock + " fail")})
+	var compileError *typst.CompileError
+	require.ErrorAs(t, err, &compileError, "the compile's own error stays matchable")
+}
+
+// unlockRenderDirectories gives back the write permission fakeLock took, so the test's
+// temporary directory can be removed.
+func unlockRenderDirectories(t *testing.T, temporary string) {
+	t.Helper()
+	entries, err := os.ReadDir(temporary)
+	require.NoError(t, err)
+	for _, entry := range entries {
+		require.NoError(t, os.Chmod(filepath.Join(temporary, entry.Name()), 0o700)) //nolint:gosec // G302: a directory needs the execute bit
+	}
+}
+
+func TestCompileReportsTheWarningsOfASuccess(t *testing.T) {
+	observer := &recordingObserver{}
+	compiler := newCompiler(t, &typst.Options{Observers: []typst.Observer{observer}})
+	_, err := compiler.Compile(t.Context(), &typst.Document{Source: []byte(fakeWarn)})
+	require.NoError(t, err)
+	require.Equal(t, "main.typ:1:16: warning: unknown font family: inter\n", observer.outcomes[0].Warnings)
+
+	_, err = compiler.Compile(t.Context(), &typst.Document{Source: []byte(fakeFail)})
+	require.Error(t, err)
+	require.Empty(t, observer.outcomes[1].Warnings, "a failure's warnings are in its diagnostics")
 }
 
 func TestCompileIsSafeForConcurrentUse(t *testing.T) {

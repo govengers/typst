@@ -12,6 +12,8 @@ import (
 type Observer interface {
 	// CompileStarted is called before the process starts. The returned context is the one the
 	// compile runs with and the one CompileFinished receives, so a tracer can put its span there.
+	// Every observer's CompileFinished receives the context the last observer returned, so an
+	// observer keeps its state under a context key of its own, never one another observer sets.
 	CompileStarted(ctx context.Context, compile *Compile) context.Context
 	// CompileFinished reports how the compile ended.
 	CompileFinished(ctx context.Context, compile *Compile, outcome *Outcome)
@@ -41,7 +43,11 @@ type Outcome struct {
 	Result     Result
 	Duration   time.Duration // from writing the render directory to removing it
 	OutputSize int           // bytes returned; zero unless Result is ResultSuccess
-	Err        error         // what Compile returned; nil on success
+	// Warnings is what typst printed on a successful compile, such as "unknown font family", in
+	// its short format; empty when there were none or the compile failed. It can quote the
+	// data, like CompileError.Diagnostics.
+	Warnings string
+	Err      error // what Compile returned; nil on success
 }
 
 func resultOf(err error, cancelled bool) Result {

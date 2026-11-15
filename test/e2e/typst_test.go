@@ -6,6 +6,7 @@ package e2e
 
 import (
 	"bytes"
+	"context"
 	_ "embed"
 	"errors"
 	"os"
@@ -169,4 +170,22 @@ func TestLimits(t *testing.T) {
 	compiler = newCompiler(t, typst.Options{MaximumOutputSize: 512})
 	_, err = compiler.Compile(t.Context(), &typst.Document{Source: []byte("Hello")})
 	require.True(t, errors.Is(err, typst.ErrOutputTooLarge), "a PDF is larger than 512 bytes: %v", err)
+}
+
+// warnings records the warnings of every compile.
+type warnings struct{ seen []string }
+
+func (w *warnings) CompileStarted(ctx context.Context, _ *typst.Compile) context.Context { return ctx }
+
+func (w *warnings) CompileFinished(_ context.Context, _ *typst.Compile, outcome *typst.Outcome) {
+	w.seen = append(w.seen, outcome.Warnings)
+}
+
+func TestAMissingFontIsAWarningOfASuccess(t *testing.T) {
+	observer := &warnings{}
+	compiler := newCompiler(t, typst.Options{Observers: []typst.Observer{observer}})
+	_, err := compiler.Compile(t.Context(), &typst.Document{Source: []byte(`#set text(font: "Inter")
+Hello`)})
+	require.NoError(t, err)
+	require.Contains(t, observer.seen[0], "main.typ:1:16: warning: unknown font family: inter")
 }

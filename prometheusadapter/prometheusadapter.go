@@ -59,7 +59,7 @@ func New(options *Options) (*Metrics, error) {
 		}, []string{"name", "format", "result"}),
 		durations: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: options.Namespace, Subsystem: subsystem, Name: "compile_duration_seconds",
-			Help: "Typst compile duration, process start to output, by template name and format.", Buckets: durationBuckets,
+			Help: "Typst compile duration, from writing the render directory to removing it, by template name and format.", Buckets: durationBuckets,
 		}, []string{"name", "format"}),
 		outputSizes: prometheus.NewHistogramVec(prometheus.HistogramOpts{
 			Namespace: options.Namespace, Subsystem: subsystem, Name: "output_bytes",
