@@ -87,6 +87,39 @@ func TestUserTextIsOnlyData(t *testing.T) {
 	require.True(t, bytes.HasPrefix(pdf, []byte("%PDF-")))
 }
 
+func TestMarkdownStaysWithinTypstLimits(t *testing.T) {
+	compiler := newCompiler(t, typst.Options{})
+	link := func(length int) string {
+		return "https://example.com/" + strings.Repeat("a", length-len("https://example.com/"))
+	}
+	inputs := map[string]string{
+		"8 quotes":              strings.Repeat(">", 8) + " x",
+		"9 quotes":              strings.Repeat(">", 9) + " x",
+		"200 quotes":            strings.Repeat(">", 200) + " x",
+		"quotes and lists":      strings.Repeat("> - ", 30) + "x",
+		"40 lists":              strings.Repeat("- ", 40) + "x",
+		"40 enums":              strings.Repeat("1. ", 40) + "x",
+		"7 quotes and a table":  strings.Repeat("> ", 7) + "| ***~~[x](https://example.com)~~*** |\n" + strings.Repeat("> ", 7) + "|---|",
+		"emphasis":              strings.Repeat("*a **b ", 60) + "x" + strings.Repeat("** a*", 60),
+		"link of 8000 bytes":    "[x](" + link(8000) + ")",
+		"link of 8001 bytes":    "[x](" + link(8001) + ")",
+		"bare url of 8001":      link(8001),
+		"repeated long target":  "[a]: " + link(7000) + "\n\n" + strings.Repeat("[a] ", 6000),
+		"wide table, many rows": "|" + strings.Repeat(" a |", 1000) + "\n|" + strings.Repeat("---|", 1000) + "\n" + strings.Repeat("|x\n", 100),
+	}
+	markups := make([]string, 0, len(inputs))
+	for _, input := range inputs {
+		markups = append(markups, typst.FromMarkdown(input))
+	}
+	// The template's own nesting takes from the same depth budget as the converted markup.
+	source := []byte(`#let data = json("/data.json")
+#table(columns: 1, list(quote(block: true, box(for markup in data.markups { eval(markup, mode: "markup") }))))`)
+
+	pdf, err := compiler.Compile(t.Context(), &typst.Document{Source: source, Data: map[string]any{"markups": markups}})
+	require.NoError(t, err)
+	require.True(t, bytes.HasPrefix(pdf, []byte("%PDF-")))
+}
+
 func normalize(text string) string {
 	return strings.Join(strings.Fields(text), " ")
 }
