@@ -86,7 +86,7 @@ func fakeTypst(arguments []string) int {
 		if err != nil || entry.IsDir() {
 			return err
 		}
-		content, err := os.ReadFile(path)
+		content, err := os.ReadFile(path) //nolint:gosec // G304: the fake reads the render directory it runs in
 		report.Files[filepath.ToSlash(path)] = string(content)
 		return err
 	})

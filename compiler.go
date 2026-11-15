@@ -183,7 +183,7 @@ func existingDirectory(path, what string) (string, error) {
 func (c *Compiler) checkVersion() (string, error) {
 	ctx, cancel := context.WithTimeout(context.Background(), versionTimeout)
 	defer cancel()
-	command := exec.CommandContext(ctx, c.options.Binary, "--version")
+	command := exec.CommandContext(ctx, c.options.Binary, "--version") //nolint:gosec // G204: the binary is the application's own setting
 	command.Env = environment
 	command.WaitDelay = waitDelay
 	output, err := command.Output()
@@ -243,16 +243,24 @@ func (c *Compiler) Compile(ctx context.Context, document *Document) ([]byte, err
 		return nil, err
 	}
 	compile := &Compile{Name: document.Name, Format: document.format()}
-	for _, observer := range c.options.Observers {
-		ctx = observer.CompileStarted(ctx, compile)
-	}
+	ctx = c.started(ctx, compile)
 	started := time.Now()
 	output, err := c.render(ctx, document, data)
-	outcome := &Outcome{Result: resultOf(err, ctx.Err() != nil), Duration: time.Since(started), OutputSize: len(output), Err: err}
+	c.finished(ctx, compile, &Outcome{Result: resultOf(err, ctx.Err() != nil), Duration: time.Since(started), OutputSize: len(output), Err: err})
+	return output, err
+}
+
+func (c *Compiler) started(ctx context.Context, compile *Compile) context.Context {
+	for _, observer := range c.options.Observers {
+		ctx = observer.CompileStarted(ctx, compile) //nolint:fatcontext // each observer wraps the previous one's context once, bounded by the observers
+	}
+	return ctx
+}
+
+func (c *Compiler) finished(ctx context.Context, compile *Compile, outcome *Outcome) {
 	for index := len(c.options.Observers) - 1; index >= 0; index-- {
 		c.options.Observers[index].CompileFinished(ctx, compile, outcome)
 	}
-	return output, err
 }
 
 // render runs one compile in a fresh directory: <directory>/project is the project root, the
@@ -344,6 +352,7 @@ func (c *Compiler) run(ctx context.Context, project string, arguments []string) 
 
 	stdout := &cappedBuffer{limit: c.options.MaximumOutputSize, exceeded: func() { cancel(ErrOutputTooLarge) }}
 	stderr := &cappedBuffer{limit: maximumDiagnosticsSize, truncate: true}
+	//nolint:gosec // G204: the binary is the application's setting; the arguments carry options and paths, never document content
 	command := exec.CommandContext(runContext, c.options.Binary, arguments...)
 	command.Dir = project
 	command.Env = environment

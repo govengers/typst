@@ -355,23 +355,26 @@ func TestObserversSeeEveryCompile(t *testing.T) {
 	require.NoError(t, outcome.Err)
 	require.Positive(t, outcome.Duration)
 
-	cancelled, cancel := context.WithCancel(t.Context())
-	cancel()
 	failures := map[string]struct {
-		ctx    context.Context
-		source string
-		format typst.Format
-		want   typst.Result
+		cancelled bool
+		source    string
+		format    typst.Format
+		want      typst.Result
 	}{
-		"compile error":    {t.Context(), fakeFail, "", typst.ResultCompileError},
-		"page not found":   {t.Context(), fakeEmpty, typst.FormatPNG, typst.ResultCompileError},
-		"output too large": {t.Context(), fakeLargePrefix + "11", "", typst.ResultOutputTooLarge},
-		"no output":        {t.Context(), fakeEmpty, "", typst.ResultFailure},
-		"cancelled":        {cancelled, fakeHang, "", typst.ResultCancelled},
+		"compile error":    {false, fakeFail, "", typst.ResultCompileError},
+		"page not found":   {false, fakeEmpty, typst.FormatPNG, typst.ResultCompileError},
+		"output too large": {false, fakeLargePrefix + "11", "", typst.ResultOutputTooLarge},
+		"no output":        {false, fakeEmpty, "", typst.ResultFailure},
+		"cancelled":        {true, fakeHang, "", typst.ResultCancelled},
 	}
 	for name, failure := range failures {
 		t.Run(name, func(t *testing.T) {
-			_, err := compiler.Compile(failure.ctx, &typst.Document{Source: []byte(failure.source), Format: failure.format})
+			ctx, cancel := context.WithCancel(t.Context())
+			if failure.cancelled {
+				cancel()
+			}
+			defer cancel()
+			_, err := compiler.Compile(ctx, &typst.Document{Source: []byte(failure.source), Format: failure.format})
 			outcome := second.outcomes[len(second.outcomes)-1]
 			require.Equal(t, failure.want, outcome.Result)
 			require.Equal(t, err, outcome.Err)
