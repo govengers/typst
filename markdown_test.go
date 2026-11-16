@@ -1,10 +1,16 @@
 package typst_test
 
 import (
+	"strconv"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/require"
+	"github.com/yuin/goldmark"
+	"github.com/yuin/goldmark/ast"
+	"github.com/yuin/goldmark/extension"
+	extensionast "github.com/yuin/goldmark/extension/ast"
+	"github.com/yuin/goldmark/text"
 
 	"github.com/govengers/typst"
 )
@@ -116,5 +122,41 @@ func FuzzFromMarkdown(f *testing.F) {
 		output := typst.FromMarkdown(markdown)
 		checker := &markupChecker{input: output}
 		require.NoError(t, checker.check(), "FromMarkdown(%q)", markdown)
+		if len(markdown) <= typst.MaximumMarkdownSize {
+			source := []byte(strings.ToValidUTF8(markdown, "�"))
+			require.GreaterOrEqual(t, typst.TableCells(source), goldmarkTableCells(source), "TableCells(%q)", markdown)
+		}
 	})
+}
+
+// A line goldmark does not count as blank must not end the table estimate: Unicode white space
+// and the control characters Go's bytes.TrimSpace removes are text to goldmark, so the rows
+// after such a line still pad to the header's width.
+func TestTableCellsIsAnUpperBound(t *testing.T) {
+	table := strings.Repeat("a|", 299) + "a\n" + strings.Repeat("-|", 299) + "-\n"
+	rows := strings.Repeat("x\n", 600)
+	for _, separator := range []string{"\f", "\v", "\u0085", " ", " ", "　", "\r", " \t", ""} {
+		t.Run(strconv.Quote(separator), func(t *testing.T) {
+			markdown := table + separator + "\n" + rows
+			source := []byte(markdown)
+			require.GreaterOrEqual(t, typst.TableCells(source), goldmarkTableCells(source))
+			if goldmarkTableCells(source) > 1<<16 {
+				require.NotContains(t, typst.FromMarkdown(markdown), "#table")
+			}
+		})
+	}
+}
+
+// goldmarkTableCells counts the table cells goldmark parses source into, with FromMarkdown's
+// extensions.
+func goldmarkTableCells(source []byte) int {
+	cells := 0
+	document := goldmark.New(goldmark.WithExtensions(extension.GFM)).Parser().Parse(text.NewReader(source))
+	_ = ast.Walk(document, func(node ast.Node, entering bool) (ast.WalkStatus, error) {
+		if _, cell := node.(*extensionast.TableCell); cell && entering {
+			cells++
+		}
+		return ast.WalkContinue, nil
+	})
+	return cells
 }

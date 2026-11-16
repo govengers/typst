@@ -83,22 +83,20 @@ func FromMarkdown(markdown string) string {
 	return writer.output.String()
 }
 
-// tableCells estimates from above how many table cells goldmark makes of source: per paragraph
-// (lines up to a blank line), the line count times the widest row that may be a delimiter row.
+// tableCells bounds from above how many table cells goldmark makes of source: the line count
+// times the widest line that may be a delimiter row. A table has a delimiter row's width and at
+// most one row per line, so the bound holds without knowing where goldmark's paragraphs end.
 func tableCells(source []byte) int {
-	cells, lines, columns := 0, 0, 0
+	lines, columns := 0, 0
 	for line := range bytes.Lines(source) {
-		if len(bytes.TrimSpace(line)) == 0 {
-			cells += lines * columns
-			lines, columns = 0, 0
-			continue
-		}
 		lines++
-		if bytes.Contains(line, []byte("-")) && bytes.Contains(line, []byte("|")) && len(bytes.Trim(line, " \t\r\n|:->")) == 0 {
+		// goldmark's delimiter row holds only space, tab, line endings, '-', '|' and ':', after a
+		// block quote's '>'.
+		if bytes.Contains(line, []byte("-")) && len(bytes.Trim(line, " \t\r\n|:->")) == 0 {
 			columns = max(columns, bytes.Count(line, []byte("|"))+1)
 		}
 	}
-	return cells + lines*columns
+	return lines * columns
 }
 
 type markdownWriter struct {
