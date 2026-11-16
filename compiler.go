@@ -246,9 +246,9 @@ func (c *Compiler) Version() string {
 // Compile renders the document and returns the PDF, SVG or PNG bytes. It returns
 // ErrInvalidDocument before running anything for a document it cannot compile, a *CompileError
 // when typst refuses the template, a plain error when typst could not run or was killed by a
-// signal, ErrTimeout, ErrOutputTooLarge, ErrPageNotFound, or the
-// context's error wrapped when ctx ends first. The render directory is removed before Compile
-// returns; when that fails, the error says so, joined with the compile's own error.
+// signal, ErrTimeout, ErrOutputTooLarge, ErrPageNotFound, or the context's error wrapped when
+// ctx ends first. The render directory is removed before Compile returns; when that fails, the
+// error says so, joined with the compile's own error.
 func (c *Compiler) Compile(ctx context.Context, document *Document) ([]byte, error) {
 	if err := document.validate(); err != nil {
 		return nil, err
