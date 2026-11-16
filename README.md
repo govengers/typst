@@ -54,7 +54,7 @@ pdf, err := compiler.Compile(ctx, &typst.Document{
 
 `Format: typst.FormatSVG` or `typst.FormatPNG` renders one page (`Page`, counted from 1, the first by default); `PixelsPerInch` sets a PNG's resolution. A PDF always holds every page.
 
-Errors to branch on: `typst.ErrInvalidDocument` (nothing ran), `*typst.CompileError` (typst refused the template; `Diagnostics` holds its messages), `typst.ErrTimeout`, `typst.ErrOutputTooLarge`, `typst.ErrPageNotFound`, and the context's error.
+Errors to branch on: `typst.ErrInvalidDocument` (nothing ran), `*typst.CompileError` (typst refused the template; `Diagnostics` holds its messages), `typst.ErrTimeout`, `typst.ErrOutputTooLarge`, `typst.ErrPageNotFound`, and the context's error. Anything else (typst missing, killed by a signal) is a plain error worth a retry.
 
 ## User text
 

@@ -36,7 +36,7 @@ case errors.As(err, &compileError):
 case errors.Is(err, typst.ErrInvalidDocument), errors.Is(err, typst.ErrOutputTooLarge):
     return jobs.Permanent(err)
 case err != nil:
-    return err // timeout or a failed process: retry with backoff
+    return err // timeout, or a process that failed or was killed (OOM): retry with backoff
 }
 ```
 

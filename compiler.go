@@ -245,7 +245,8 @@ func (c *Compiler) Version() string {
 
 // Compile renders the document and returns the PDF, SVG or PNG bytes. It returns
 // ErrInvalidDocument before running anything for a document it cannot compile, a *CompileError
-// when typst refuses the template, ErrTimeout, ErrOutputTooLarge, ErrPageNotFound, or the
+// when typst refuses the template, a plain error when typst could not run or was killed by a
+// signal, ErrTimeout, ErrOutputTooLarge, ErrPageNotFound, or the
 // context's error wrapped when ctx ends first. The render directory is removed before Compile
 // returns; when that fails, the error says so, joined with the compile's own error.
 func (c *Compiler) Compile(ctx context.Context, document *Document) ([]byte, error) {
@@ -391,8 +392,10 @@ func (c *Compiler) run(ctx context.Context, project string, arguments []string) 
 	case errors.Is(cause, ErrOutputTooLarge), errors.Is(cause, ErrTimeout):
 		return nil, "", cause
 	}
+	// A negative exit code is a process ended by a signal (an OOM kill, say): not typst
+	// refusing the document, so it stays a plain error a caller retries.
 	var exitError *exec.ExitError
-	if errors.As(err, &exitError) {
+	if errors.As(err, &exitError) && exitError.ExitCode() >= 0 {
 		return nil, "", &CompileError{ExitCode: exitError.ExitCode(), Diagnostics: stderr.String()}
 	}
 	return nil, "", fmt.Errorf("typst: run %s: %w", c.options.Binary, err)

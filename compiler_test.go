@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"sync"
@@ -239,6 +240,17 @@ func TestCompileErrorWithoutDiagnostics(t *testing.T) {
 	require.EqualError(t, &typst.CompileError{Diagnostics: "panicked\nat line 2"}, "typst: compile failed: panicked")
 }
 
+func TestCompileReportsAKilledProcessAsAFailureNotACompileError(t *testing.T) {
+	compiler := newCompiler(t, &typst.Options{})
+	_, err := compiler.Compile(t.Context(), &typst.Document{Source: []byte(fakeKill)})
+
+	var compileError *typst.CompileError
+	require.False(t, errors.As(err, &compileError), "a killed process did not refuse the document: %v", err)
+	var exitError *exec.ExitError
+	require.ErrorAs(t, err, &exitError)
+	require.Negative(t, exitError.ExitCode())
+}
+
 func TestCompileKillsAProcessThatRunsTooLong(t *testing.T) {
 	compiler := newCompiler(t, &typst.Options{Timeout: time.Millisecond})
 	_, err := compiler.Compile(t.Context(), &typst.Document{Source: []byte(fakeHang)})
@@ -438,6 +450,7 @@ func TestObserversSeeEveryCompile(t *testing.T) {
 		"page not found":   {false, fakeEmpty, typst.FormatPNG, typst.ResultCompileError},
 		"output too large": {false, fakeLargePrefix + "11", "", typst.ResultOutputTooLarge},
 		"no output":        {false, fakeEmpty, "", typst.ResultFailure},
+		"killed":           {false, fakeKill, "", typst.ResultFailure},
 		"cancelled":        {true, fakeHang, "", typst.ResultCancelled},
 	}
 	for name, failure := range failures {

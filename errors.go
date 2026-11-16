@@ -22,7 +22,9 @@ var (
 )
 
 // CompileError reports that typst ran and refused the document: a syntax error in the template,
-// an unknown variable, a missing file, a panic the template raised. Diagnostics holds what typst
+// an unknown variable, a missing file, a panic the template raised. A typst process ended by a
+// signal (an OOM kill) is not a CompileError but a plain error wrapping *exec.ExitError, because
+// a retry can render. Diagnostics holds what typst
 // wrote to stderr in its short format (path:line:column: error: message), cut at
 // maximumDiagnosticsSize. The diagnostics quote the template and can quote values the template
 // took from the data, so treat them like the data when logging.

@@ -40,6 +40,7 @@ const (
 	fakeEmpty       = "empty"  // exit 0 without output
 	fakeFlood       = "flood"  // 200 KiB on stderr, exit 1
 	fakeExit        = "exit 3" // exit 3 without diagnostics
+	fakeKill        = "kill"   // diagnostics on stderr, then kill itself (SIGKILL on Unix)
 	fakeLargePrefix = "large " // "large <n>": n bytes on stdout
 	fakeWarn        = "warn"   // a warning on stderr, output, exit 0
 	fakeLock        = "lock"   // make the render directory unremovable, output, exit 0; "lock fail" exits 1
@@ -78,6 +79,11 @@ func fakeTypst(arguments []string) int {
 		return 1
 	case command == fakeExit:
 		return 3
+	case command == fakeKill:
+		fmt.Fprintln(os.Stderr, "main.typ:1:1: warning: something minor")
+		self, _ := os.FindProcess(os.Getpid())
+		_ = self.Kill()
+		select {} // the kill ends the process
 	case command == fakeWarn:
 		fmt.Fprintln(os.Stderr, "main.typ:1:16: warning: unknown font family: inter")
 		fmt.Print("output")
