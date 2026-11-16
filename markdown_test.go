@@ -133,14 +133,16 @@ func FuzzFromMarkdown(f *testing.F) {
 // and the control characters Go's bytes.TrimSpace removes are text to goldmark, so the rows
 // after such a line still pad to the header's width.
 func TestTableCellsIsAnUpperBound(t *testing.T) {
-	table := strings.Repeat("a|", 299) + "a\n" + strings.Repeat("-|", 299) + "-\n"
-	rows := strings.Repeat("x\n", 600)
+	// 257 columns times 258 rows is 66 306 cells, just over the limit.
+	table := strings.Repeat("a|", 256) + "a\n" + strings.Repeat("-|", 256) + "-\n"
+	rows := strings.Repeat("x\n", 256)
 	for _, separator := range []string{"\f", "\v", "\u0085", " ", " ", "　", "\r", " \t", ""} {
 		t.Run(strconv.Quote(separator), func(t *testing.T) {
 			markdown := table + separator + "\n" + rows
 			source := []byte(markdown)
-			require.GreaterOrEqual(t, typst.TableCells(source), goldmarkTableCells(source))
-			if goldmarkTableCells(source) > 1<<16 {
+			cells := goldmarkTableCells(source)
+			require.GreaterOrEqual(t, typst.TableCells(source), cells)
+			if cells > 1<<16 {
 				require.NotContains(t, typst.FromMarkdown(markdown), "#table")
 			}
 		})

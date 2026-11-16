@@ -42,7 +42,8 @@ const (
 	maximumLinkLength = 8000
 	// maximumTableCells bounds the table cells an input may make. goldmark fills every short
 	// row up to the header's width, so 32 KiB of one-cell rows under a wide header become
-	// millions of cells and gigabytes; beyond the bound tables stay text.
+	// millions of cells and gigabytes. The bound is checked against tableCells, the input's
+	// line count times its widest delimiter row; beyond it every table stays text.
 	maximumTableCells = 1 << 16
 	// maximumOutputSize bounds the markup FromMarkdown returns; a reference link repeated
 	// copies its target each time. Beyond it the input is returned as Escape of it.
@@ -59,7 +60,8 @@ const (
 // The output stays within what typst accepts and the work within a bound: structure nested
 // deeper than eight calls (block quotes, lists, tables, headings, emphasis, links, counted
 // together) keeps only its text, a link target longer than typst accepts keeps only its label,
-// tables stay text when they would make too many cells, and an input longer than
+// tables stay text when the input's line count times its widest table exceeds 65536 cells
+// (a long input of many short lines keeps even small tables as text), and an input longer than
 // MaximumMarkdownSize, or one whose markup grows beyond 32 times that, is returned as Escape of
 // it. Keep the template's own nesting around the result shallow.
 //
