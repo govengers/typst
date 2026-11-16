@@ -64,8 +64,8 @@ func TestNewChecksTheBinary(t *testing.T) {
 		{"nil observer", typst.Options{Observers: []typst.Observer{nil}}, "nil Observer"},
 		{"missing font path", typst.Options{FontPaths: []string{filepath.Join(t.TempDir(), "fonts")}}, "font path"},
 		{"font path is a file", typst.Options{FontPaths: []string{file}}, "is not a directory"},
-		{"two font paths in one", typst.Options{FontPaths: []string{t.TempDir() + string(filepath.ListSeparator) + t.TempDir()}}, "one non-empty directory"},
-		{"empty font path", typst.Options{FontPaths: []string{""}}, "one non-empty directory"},
+		{"two font paths in one", typst.Options{FontPaths: []string{t.TempDir() + string(filepath.ListSeparator) + t.TempDir()}}, "must be one directory"},
+		{"empty font path", typst.Options{FontPaths: []string{""}}, "font path must not be empty"},
 		{"missing package path", typst.Options{PackagePath: filepath.Join(t.TempDir(), "packages")}, "package path"},
 		{"missing temporary directory", typst.Options{TemporaryDirectory: filepath.Join(t.TempDir(), "missing")}, "temporary directory"},
 	}
@@ -86,6 +86,16 @@ func TestNewAcceptsAMatchingBinary(t *testing.T) {
 
 	compiler = newCompiler(t, &typst.Options{Binary: fakeBinary(t, "0.13.0")})
 	require.Equal(t, "0.13.0", compiler.Version())
+}
+
+// Only font paths are joined into one argument; the package path and the temporary directory
+// may contain the list separator.
+func TestSingleDirectoriesMayContainTheListSeparator(t *testing.T) {
+	directory := filepath.Join(t.TempDir(), "a"+string(filepath.ListSeparator)+"b")
+	require.NoError(t, os.Mkdir(directory, 0o700))
+	compiler := newCompiler(t, &typst.Options{PackagePath: directory, TemporaryDirectory: directory})
+	report := echo(t, compiler, &typst.Document{Source: []byte("echo")})
+	require.Contains(t, report.Arguments, directory)
 }
 
 func TestNilOptionsLookUpTypstOnThePath(t *testing.T) {
@@ -299,6 +309,9 @@ func TestCompileWithoutATemporaryDirectory(t *testing.T) {
 }
 
 func TestCompileReportsARenderDirectoryLeftBehind(t *testing.T) {
+	if os.Geteuid() == 0 {
+		t.Skip("root removes a directory without write permission, so the fake cannot lock it")
+	}
 	temporary := t.TempDir()
 	t.Cleanup(func() { unlockRenderDirectories(t, temporary) })
 	compiler := newCompiler(t, &typst.Options{TemporaryDirectory: temporary})

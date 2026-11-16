@@ -136,6 +136,10 @@ func (c *Compiler) applyDefaults() error {
 	}
 	options.Binary = binary
 	for index, path := range options.FontPaths {
+		// typst takes every font path in one --font-path value, joined by the list separator.
+		if strings.ContainsRune(path, filepath.ListSeparator) {
+			return fmt.Errorf("typst: font path %q must be one directory", path)
+		}
 		if options.FontPaths[index], err = existingDirectory(path, "font path"); err != nil {
 			return err
 		}
@@ -172,8 +176,8 @@ func resolveBinary(binary string) (string, error) {
 // existingDirectory returns the absolute path of a directory that must exist. typst ignores a
 // missing font directory silently, so the mistake surfaces here instead of as a wrong font.
 func existingDirectory(path, what string) (string, error) {
-	if path == "" || strings.ContainsRune(path, filepath.ListSeparator) {
-		return "", fmt.Errorf("typst: %s %q must be one non-empty directory", what, path)
+	if path == "" {
+		return "", fmt.Errorf("typst: %s must not be empty", what)
 	}
 	absolute, err := filepath.Abs(path)
 	if err != nil {
